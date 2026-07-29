@@ -52,19 +52,27 @@ app.post('/api/orders', async (req, res) => {
     // Call payment-service to process payment for this order.
     // Failure here does not fail order creation — order stays PENDING
     // and can be retried; this keeps the two services loosely coupled.
+    let paymentStatus;
     try {
       const paymentRes = await axios.post(
         `${PAYMENT_SERVICE_URL}/api/payments`,
         { orderId: order.id, amount: order.amount },
         { timeout: 5000 }
       );
-      order.paymentStatus = paymentRes.data.status;
+      paymentStatus = paymentRes.data.status;
     } catch (paymentErr) {
       req.log.error({ err: paymentErr.message }, 'payment-service call failed');
-      order.paymentStatus = 'PAYMENT_SERVICE_UNAVAILABLE';
+      paymentStatus = 'PAYMENT_SERVICE_UNAVAILABLE';
     }
 
-    res.status(201).json(order);
+    // Re-fetch the row so the response reflects the real persisted status
+    // (payment-service's callback to PATCH /orders/:id/status already
+    // updated it by this point) instead of the stale pre-payment value.
+    const freshResult = await client.query('SELECT * FROM orders WHERE id = $1', [order.id]);
+    const freshOrder = freshResult.rows[0] || order;
+    freshOrder.paymentStatus = paymentStatus;
+
+    res.status(201).json(freshOrder);
   } catch (err) {
     req.log.error(err, 'failed to create order');
     res.status(500).json({ error: 'internal server error' });

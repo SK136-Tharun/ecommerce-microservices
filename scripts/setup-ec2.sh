@@ -41,7 +41,11 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 sudo usermod -aG docker "$USER"
 
 echo ">> Creating dedicated service user for systemd mode"
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin appsvc || true
+# --create-home matters here: npm needs a writable $HOME for its cache
+# (~/.npm) even when we only ever run `npm install` once during deploy.
+# A homeless --no-create-home system user causes npm installs to fail
+# with EACCES on /home/appsvc, and can leave node_modules half-extracted.
+sudo useradd --system --create-home --shell /usr/sbin/nologin appsvc || true
 
 echo ">> Configuring firewall (adjust as needed)"
 sudo ufw allow OpenSSH

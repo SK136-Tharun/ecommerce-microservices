@@ -17,8 +17,12 @@ app.get('/health', (req, res) => res.json({ status: 'ok', service: 'frontend' })
 // This frontend acts as a lightweight gateway so it works standalone,
 // behind nginx, in Docker, via PM2, or via systemd without any change
 // to client-side code.
-app.use('/api/orders', createProxyMiddleware({ target: ORDER_SERVICE_URL, changeOrigin: true }));
-app.use('/api/payments', createProxyMiddleware({ target: PAYMENT_SERVICE_URL, changeOrigin: true }));
+// pathFilter (not the app.use mount path) does the route matching here —
+// mounting with app.use('/api/orders', proxy) strips that prefix from
+// req.url before the proxy ever sees it, so order-service would receive
+// "/" instead of "/api/orders" and 404. pathFilter preserves the full path.
+app.use(createProxyMiddleware({ target: ORDER_SERVICE_URL, changeOrigin: true, pathFilter: '/api/orders' }));
+app.use(createProxyMiddleware({ target: PAYMENT_SERVICE_URL, changeOrigin: true, pathFilter: '/api/payments' }));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

@@ -24,4 +24,15 @@ EOSQL
 
 sudo -u postgres psql -d "${DB_NAME}" -f "$(dirname "$0")/../db/init.sql"
 
+# init.sql runs as the postgres superuser, so the tables it creates are
+# owned by postgres, not DB_USER. Without this, the app connects fine but
+# every query fails with "permission denied for table X" (42501) even
+# though the schema, database, and credentials are all otherwise correct.
+sudo -u postgres psql -d "${DB_NAME}" -v ON_ERROR_STOP=1 <<-EOSQL
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};
+EOSQL
+
 echo ">> Database '${DB_NAME}' ready with user '${DB_USER}'."
