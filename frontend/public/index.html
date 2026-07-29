@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ledger — Order &amp; Payment Console</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="rail">
+    <div class="rail-brand">
+      <span class="rail-mark">L</span>
+      <span class="rail-name">Ledger</span>
+    </div>
+    <div class="rail-status" id="systemStatus">
+      <span class="dot" data-svc="frontend"></span> frontend
+      <span class="dot" data-svc="order"></span> order
+      <span class="dot" data-svc="payment"></span> payment
+    </div>
+  </div>
+
+  <main class="console">
+    <header class="console-header">
+      <div>
+        <h1>Order &amp; Payment Console</h1>
+        <p class="sub">Place an order, watch it clear payment, in real time.</p>
+      </div>
+      <button id="refreshBtn" class="btn-ghost">Refresh</button>
+    </header>
+
+    <section class="panel form-panel">
+      <h2>New order</h2>
+      <form id="orderForm">
+        <div class="field">
+          <label for="customerName">Customer</label>
+          <input id="customerName" name="customerName" required placeholder="Ada Lovelace" />
+        </div>
+        <div class="field">
+          <label for="productName">Product</label>
+          <input id="productName" name="productName" required placeholder="Mechanical keyboard" />
+        </div>
+        <div class="field">
+          <label for="quantity">Quantity</label>
+          <input id="quantity" name="quantity" type="number" min="1" value="1" required />
+        </div>
+        <div class="field">
+          <label for="amount">Amount (USD)</label>
+          <input id="amount" name="amount" type="number" min="0" step="0.01" value="49.00" required />
+        </div>
+        <button type="submit" class="btn-primary">Place order &amp; charge</button>
+      </form>
+      <p id="formMsg" class="form-msg" role="status"></p>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="table-head">
+        <h2>Orders</h2>
+        <span class="count" id="orderCount">0</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Customer</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr class="empty-row"><td colspan="7">No orders yet — place one above.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

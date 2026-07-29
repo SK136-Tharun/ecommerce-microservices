@@ -1,0 +1,27 @@
+[Unit]
+Description=Dashboard Frontend (Node.js)
+After=network.target order-service.service payment-service.service
+Wants=order-service.service payment-service.service
+
+[Service]
+Type=simple
+User=appsvc
+Group=appsvc
+WorkingDirectory=/opt/app/frontend
+EnvironmentFile=/opt/app/frontend/.env
+ExecStart=/usr/bin/node /opt/app/frontend/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/app/frontend
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=frontend
+
+[Install]
+WantedBy=multi-user.target

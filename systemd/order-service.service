@@ -1,0 +1,29 @@
+[Unit]
+Description=Order Service (Node.js)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=appsvc
+Group=appsvc
+WorkingDirectory=/opt/app/services/order-service
+EnvironmentFile=/opt/app/services/order-service/.env
+ExecStart=/usr/bin/node /opt/app/services/order-service/server.js
+Restart=on-failure
+RestartSec=5
+# --- Hardening ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/app/services/order-service
+LimitNOFILE=65535
+
+# --- Logging goes to journald: `journalctl -u order-service -f` ---
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=order-service
+
+[Install]
+WantedBy=multi-user.target

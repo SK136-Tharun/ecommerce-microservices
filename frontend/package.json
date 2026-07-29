@@ -1,0 +1,18 @@
+{
+  "name": "dashboard-frontend",
+  "version": "1.0.0",
+  "description": "Static dashboard UI for the order/payment system",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5",
+    "helmet": "^7.1.0",
+    "http-proxy-middleware": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
