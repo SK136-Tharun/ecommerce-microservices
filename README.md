@@ -1,87 +1,80 @@
 # Order & Payment Microservices — Sample App
 
-A small, production-grade-ish reference system: **3 services + a database**, wired
-together over HTTP, deployable **three different ways** on the same EC2 Ubuntu box:
+A small, production-grade-ish reference system: **3 services + a database**,
+wired together over HTTP, deployable **three different ways** — and this
+version is built so all three can run **at the same time, side by side, on
+the same EC2 box**, each on its own ports and its own database, so you can
+compare them directly instead of stopping one to try the next.
 
-1. **systemd** — each app runs as a native Linux service
-2. **PM2** — each app runs as a managed Node process
-3. **Docker Compose** — each app runs as a container
+| Mode | Frontend | Order Service | Payment Service | Database | URL via nginx |
+|---|---|---|---|---|---|
+| **systemd** | `:3001` | `:4011` | `:4021` | `appdb_systemd` | `http://<host>/systemd/` |
+| **PM2** | `:3002` | `:4012` | `:4022` | `appdb_pm2` | `http://<host>/pm2/` |
+| **Docker** | `:3003` | `:4013` | `:4023` | `appdb_docker` (own container) | `http://<host>/docker/` |
 
-All three modes use the *same application code* — only how the process is
-supervised changes.
+Every service exposes `GET /health`, which now returns a `mode` field
+(`systemd` / `pm2` / `docker`) and the port it's running on — so you can
+`curl` any of the nine running processes and immediately see which
+deployment produced the response. The dashboard also shows a colored
+**mode badge** in its header for the same reason.
 
-## Architecture
+## Architecture (per mode)
 
 ```
                         ┌────────────────────┐
-   Browser  ───────────▶│   nginx :80         │  (optional, recommended for prod)
+   Browser  ───────────▶│   nginx :80         │  routes by path prefix
                         └─────────┬───────────┘
-                                  │ proxy_pass
-                        ┌─────────▼───────────┐
-                        │  frontend :3000       │  static dashboard + light API gateway
-                        │  (Express + proxy)     │
-                        └───────┬──────┬────────┘
-                    /api/orders │      │ /api/payments
-                        ┌───────▼──┐ ┌─▼─────────────┐
-                        │  order    │ │  payment       │
-                        │  service  │◀│  service       │
-                        │  :4001    │─▶  :4002         │
-                        └─────┬─────┘ └───────┬────────┘
-                              │  SQL           │ SQL
-                              └───────┬────────┘
-                                ┌─────▼──────┐
-                                │  PostgreSQL │
-                                │  (orders,   │
-                                │   payments) │
-                                └─────────────┘
+              /systemd/ │  /pm2/  │  /docker/
+                 ┌───────┘         └───────┐
+                 ▼                         ▼
+        frontend :300X                (same pattern
+        (Express + proxy)               per mode)
+                 │  api/orders  │  api/payments
+           ┌─────▼──────┐  ┌────▼───────┐
+           │ order       │  │ payment    │
+           │ service     │◀▶│ service    │
+           │ :401X       │  │ :402X      │
+           └──────┬──────┘  └─────┬──────┘
+                  │  SQL           │ SQL
+                  └───────┬────────┘
+                    ┌──────▼──────┐
+                    │ PostgreSQL   │  (own DB per mode)
+                    └──────────────┘
 ```
 
-**Flow:** the dashboard posts a new order → `order-service` inserts a `PENDING`
-row and calls `payment-service` → `payment-service` simulates a charge, writes
-a `payments` row, then calls back into `order-service` to flip the order to
-`PAID` or `PAYMENT_FAILED`. This request chain is the "communicating with each
-other" part you asked for — two independent services, each with their own
-code/deploy lifecycle, coordinating over plain HTTP with retriable, loosely
-coupled calls.
+**Flow:** the dashboard posts a new order → `order-service` inserts a
+`PENDING` row and calls `payment-service` → `payment-service` simulates a
+charge (90% success / 10% failure, by design — not a bug), writes a
+`payments` row, then calls back into `order-service` to flip the order to
+`PAID` or `PAYMENT_FAILED`. `order-service` re-fetches the row after that
+callback so its response always reflects the real persisted status.
 
 ## Repository layout
 
 ```
 ecommerce-microservices/
 ├── services/
-│   ├── order-service/       # Express API — owns "orders" table
-│   └── payment-service/     # Express API — owns "payments" table, simulates a gateway
-├── frontend/                # Dashboard UI (static HTML/CSS/JS) + tiny Express gateway
-├── db/init.sql              # Schema, auto-applied by Docker, or run manually
-├── docker/docker-compose.yml
-├── systemd/*.service        # Unit files for the systemd deployment mode
-├── pm2/ecosystem.config.js  # Process list for the PM2 deployment mode
-├── nginx/app.conf           # Reverse proxy in front of whichever mode you run
+│   ├── order-service/       # Express API -- owns "orders" table
+│   └── payment-service/     # Express API -- owns "payments" table
+├── frontend/                # Dashboard UI + tiny Express gateway
+├── db/init.sql              # Schema, applied once per database
+├── docker/docker-compose.yml  # mode: docker  (ports 3003/4013/4023)
+├── systemd/*.service          # mode: systemd (ports 3001/4011/4021, via .env)
+├── pm2/ecosystem.config.js    # mode: pm2     (ports 3002/4012/4022, env inline)
+├── nginx/app.conf           # Path-based router in front of all three modes
 ├── scripts/setup-ec2.sh     # One-shot EC2 bootstrap (Node, PM2, Docker, Postgres, nginx)
-├── scripts/create-db.sh     # DB + role creation for systemd/PM2 modes
-└── .github/workflows/ci.yml # Builds images and smoke-tests the stack on every push
+├── scripts/create-db.sh     # Creates + grants a named DB (run once per mode)
+└── .github/workflows/ci.yml # Builds images and smoke-tests the Docker mode
 ```
-
-## Services at a glance
-
-| Service | Port | Responsibility | Talks to |
-|---|---|---|---|
-| `frontend` | 3000 | Serves dashboard, proxies `/api/*` | order-service, payment-service |
-| `order-service` | 4001 | Create/list orders, owns `orders` table | Postgres, payment-service |
-| `payment-service` | 4002 | Simulates payment, owns `payments` table | Postgres, order-service |
-| `postgres` | 5432 | Shared database (2 tables: `orders`, `payments`) | — |
-
-Each service exposes `GET /health` for load balancers, Docker healthchecks,
-and monitoring.
 
 ---
 
 ## 0. Provision the EC2 instance
 
-- Ubuntu 22.04 or 24.04 LTS, t3.small or larger (t3.micro works for the demo)
-- Security group: allow inbound **22** (SSH, your IP only), **80** (HTTP), and
-  **443** if you add TLS later. Do **not** open 4001/4002/5432 to the internet.
-- SSH in, clone the repo, then run the bootstrap script:
+- Ubuntu 22.04/24.04 LTS, t3.small+
+- Security group: inbound **22** (your IP), **80** (HTTP). Don't open
+  3001-3003, 4011-4023, or 5432 to the internet — those stay behind nginx
+  or on `localhost`/the Docker network only.
 
 ```bash
 git clone https://github.com/<your-username>/ecommerce-microservices.git
@@ -90,26 +83,24 @@ chmod +x scripts/*.sh
 sudo ./scripts/setup-ec2.sh
 ```
 
-This installs Node 20, PM2, Docker + Compose plugin, PostgreSQL, nginx, and a
-dedicated `appsvc` system user — everything needed for **all three** modes so
-you can try each one on the same box (just stop one before starting another
-on the same ports).
-
-Pick **one** of the three sections below.
+Installs Node 20, PM2, Docker + Compose plugin, PostgreSQL, nginx, and a
+dedicated `appsvc` system user **with a real home directory** (npm needs
+`$HOME` for its cache — a homeless system user makes every `npm install`
+fail with `EACCES`).
 
 ---
 
-## Mode 1 — systemd (native Linux services)
-
-Best for: a traditional, no-container VM deployment where you want the OS's
-own process supervisor (auto-start on boot, `journalctl` logs, restart
-policies) managing things directly.
+## Mode 1 — systemd (ports 3001 / 4011 / 4021, db `appdb_systemd`)
 
 **1. Create the database**
 ```bash
-DB_USER=appuser DB_PASSWORD='change_me_strong_password' DB_NAME=appdb \
+DB_USER=appuser DB_PASSWORD='change_me_strong_password' DB_NAME=appdb_systemd \
   sudo -E ./scripts/create-db.sh
 ```
+This both creates the schema *and* grants `appuser` ownership/privileges on
+it — `init.sql` runs as the `postgres` superuser, so without an explicit
+grant step the app would connect fine but every query would fail with
+`permission denied for table orders` (error `42501`).
 
 **2. Deploy the code to `/opt/app`**
 ```bash
@@ -118,177 +109,206 @@ sudo cp -r services frontend /opt/app/
 sudo chown -R appsvc:appsvc /opt/app
 ```
 
-**3. Install dependencies and configure env files**
+**3. Install dependencies as `appsvc`**
 ```bash
-cd /opt/app/services/order-service && sudo -u appsvc npm install --omit=dev
-cp .env.example .env   # then edit DB_PASSWORD to match step 1
-cd /opt/app/services/payment-service && sudo -u appsvc npm install --omit=dev
-cp .env.example .env   # edit DB_PASSWORD
+cd /opt/app/services/order-service   && sudo -u appsvc HOME=/home/appsvc npm install --omit=dev
+cd /opt/app/services/payment-service && sudo -u appsvc HOME=/home/appsvc npm install --omit=dev
+cd /opt/app/frontend                 && sudo -u appsvc HOME=/home/appsvc npm install --omit=dev
+```
+Verify every install actually completed (npm's tmp-dir cleanup can
+occasionally race and silently drop files):
+```bash
+ls /opt/app/services/order-service/node_modules   | grep -E '^(dotenv|express|pg|axios|helmet|pino)$'
+ls /opt/app/services/payment-service/node_modules | grep -E '^(dotenv|express|pg|axios|helmet|pino)$'
+ls /opt/app/frontend/node_modules                 | grep -E '^(dotenv|express|helmet|http-proxy-middleware)$'
+```
+Each command should print back every name listed. If any are missing,
+`rm -rf node_modules package-lock.json` and re-run that install.
 
-cd /opt/app/frontend && sudo -u appsvc npm install --omit=dev
-cp .env.example .env   # defaults are fine (points at localhost:4001/4002)
+**4. Env files (systemd mode ports/DB)**
+```bash
+sudo tee /opt/app/services/order-service/.env > /dev/null << 'EOF'
+PORT=4011
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=appuser
+DB_PASSWORD=change_me_strong_password
+DB_NAME=appdb_systemd
+PAYMENT_SERVICE_URL=http://localhost:4021
+DEPLOY_MODE=systemd
+LOG_LEVEL=info
+EOF
+
+sudo tee /opt/app/services/payment-service/.env > /dev/null << 'EOF'
+PORT=4021
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=appuser
+DB_PASSWORD=change_me_strong_password
+DB_NAME=appdb_systemd
+ORDER_SERVICE_URL=http://localhost:4011
+DEPLOY_MODE=systemd
+LOG_LEVEL=info
+EOF
+
+sudo tee /opt/app/frontend/.env > /dev/null << 'EOF'
+PORT=3001
+ORDER_SERVICE_URL=http://localhost:4011
+PAYMENT_SERVICE_URL=http://localhost:4021
+DEPLOY_MODE=systemd
+EOF
 ```
 
-**4. Install and start the unit files**
+**5. Install and start the unit files**
 ```bash
 sudo cp systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now order-service payment-service frontend
-```
-
-**5. Check status / logs**
-```bash
 systemctl status order-service payment-service frontend
-journalctl -u order-service -f
 ```
 
-**6. Front it with nginx**
+**6. Test it directly (before nginx)**
 ```bash
-sudo cp nginx/app.conf /etc/nginx/sites-available/app.conf
-sudo ln -s /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Visit `http://<ec2-public-ip>/`.
-
-**Stopping this mode** (before trying another one on the same ports):
-```bash
-sudo systemctl disable --now order-service payment-service frontend
+curl -s http://localhost:4011/health   # -> {"status":"ok","service":"order-service","mode":"systemd","port":"4011",...}
+curl -s http://localhost:3001/health   # -> {"status":"ok","service":"frontend","mode":"systemd","port":"3001"}
 ```
 
 ---
 
-## Mode 2 — PM2 (managed Node processes)
+## Mode 2 — PM2 (ports 3002 / 4012 / 4022, db `appdb_pm2`)
 
-Best for: Node-centric teams who want zero-downtime reloads, a process
-dashboard (`pm2 monit`), and log management without full container overhead.
+Run from a **separate checkout**, `~/app`, so it never touches the same
+files as the systemd deployment in `/opt/app`.
 
-**1. Database** — same as systemd mode (`scripts/create-db.sh`), unless
-already created.
+**1. Database**
+```bash
+DB_USER=appuser DB_PASSWORD='change_me_strong_password' DB_NAME=appdb_pm2 \
+  sudo -E ./scripts/create-db.sh
+```
 
-**2. Clone / pull the repo somewhere PM2 can read it, e.g. `~/app`**
+**2. Clone and install**
 ```bash
 git clone https://github.com/<your-username>/ecommerce-microservices.git ~/app
 cd ~/app
+(cd services/order-service && npm install --omit=dev)
+(cd services/payment-service && npm install --omit=dev)
+(cd frontend && npm install --omit=dev)
 ```
 
-**3. Install deps and env files for each app**
-```bash
-(cd services/order-service && npm install --omit=dev && cp .env.example .env)
-(cd services/payment-service && npm install --omit=dev && cp .env.example .env)
-(cd frontend && npm install --omit=dev && cp .env.example .env)
-# edit each .env, set DB_PASSWORD to match the DB you created
-```
-
-**4. Start everything with PM2**
+**3. Start with PM2** — ports, DB name, and `DEPLOY_MODE=pm2` are already
+set inline in `pm2/ecosystem.config.js`, so no `.env` editing is needed:
 ```bash
 sudo mkdir -p /var/log/pm2 && sudo chown $USER /var/log/pm2
-pm2 start pm2/ecosystem.config.js
+DB_PASSWORD='change_me_strong_password' pm2 start pm2/ecosystem.config.js
 pm2 status
-```
-
-**5. Persist across reboots**
-```bash
 pm2 save
 pm2 startup systemd   # run the printed sudo command it outputs
 ```
 
-**6. Useful PM2 commands**
+**4. Test it directly**
 ```bash
-pm2 logs order-service       # tail logs for one app
-pm2 restart payment-service  # zero-downtime-ish restart
-pm2 monit                    # live CPU/memory dashboard
+curl -s http://localhost:4012/health   # mode: pm2
+curl -s http://localhost:3002/health   # mode: pm2
 ```
 
-**7. Front it with nginx** — same `nginx/app.conf` as Mode 1.
-
-**Stopping this mode:**
-```bash
-pm2 delete ecosystem.config.js
-```
+**Useful PM2 commands:** `pm2 logs order-service-pm2`, `pm2 restart frontend-pm2`, `pm2 monit`.
 
 ---
 
-## Mode 3 — Docker Compose (containers)
+## Mode 3 — Docker Compose (ports 3003 / 4013 / 4023, own containerized DB)
 
-Best for: reproducible builds, easy horizontal scaling, and matching your
-local dev environment to prod exactly.
+Fully isolated — its own Postgres **container**, so there's no dependency
+on (or conflict with) the host Postgres used by the other two modes.
 
-**1. Configure environment**
 ```bash
-cd docker
+cd ~/app/docker   # or wherever you cloned it
 cp .env.example .env
-# edit DB_PASSWORD in .env
-```
-
-**2. Build and start**
-```bash
+# edit DB_PASSWORD in .env if you want it to differ from the other modes
 docker compose up -d --build
 docker compose ps
 ```
 
-Postgres, order-service, and payment-service all sit on an isolated Docker
-bridge network (`app-network`) and are **not** exposed to the host — only the
-frontend's port 3000 is published. The DB schema in `db/init.sql` is applied
-automatically on first boot via Postgres's `docker-entrypoint-initdb.d`
-mechanism.
-
-**3. Front it with nginx** (proxying to `127.0.0.1:3000`, same `nginx/app.conf`
-as the other modes), or just open port 3000 directly for a quick demo.
-
-**4. Logs / lifecycle**
+**Test it directly**
 ```bash
-docker compose logs -f order-service
-docker compose restart payment-service
-docker compose down          # stop, keep DB volume
-docker compose down -v       # stop and wipe the DB volume
+curl -s http://localhost:4013/health   # mode: docker
+curl -s http://localhost:3003/health   # mode: docker
 ```
 
-**Stopping this mode:**
-```bash
-cd docker && docker compose down
-```
+`docker compose logs -f order-service`, `docker compose restart payment-service`,
+`docker compose down` (keeps the DB volume) / `docker compose down -v` (wipes it).
 
 ---
 
-## Trying it out (any mode)
+## Running all three modes simultaneously + nginx
+
+Once all three are up, wire nginx in front so every mode is reachable over
+plain HTTP on port 80, distinguished by path:
 
 ```bash
-curl http://<host>/api/orders
-
-curl -X POST http://<host>/api/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"customerName":"Ada Lovelace","productName":"Keyboard","quantity":1,"amount":49.00}'
+cd ~/app   # (or wherever the repo is checked out)
+sudo cp nginx/app.conf /etc/nginx/sites-available/app.conf
+sudo ln -sf /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Or just open `http://<host>/` in a browser and use the dashboard form.
+Now visit:
+- `http://<ec2-public-ip>/` — a landing page linking to all three
+- `http://<ec2-public-ip>/systemd/` — the systemd-mode dashboard (blue badge)
+- `http://<ec2-public-ip>/pm2/` — the PM2-mode dashboard (green badge)
+- `http://<ec2-public-ip>/docker/` — the Docker-mode dashboard (purple badge)
+
+Each is a completely independent stack with its own database — placing an
+order on `/pm2/` does not affect `/systemd/` or `/docker/`, which is the
+easiest way to prove all three are genuinely running side by side rather
+than one process serving all three paths.
+
+### End-to-end verification of all three at once
+```bash
+for mode in "systemd:4011" "pm2:4012" "docker:4013"; do
+  name="${mode%%:*}"; port="${mode##*:}"
+  echo "== $name (order-service :$port) =="
+  curl -s -X POST "http://localhost:${port}/api/orders" \
+    -H 'Content-Type: application/json' \
+    -d '{"customerName":"Test","productName":"Widget","quantity":1,"amount":10.00}' \
+    | python3 -m json.tool
+done
+```
+Each response's `servedByMode` field should match the mode you queried.
 
 ---
 
 ## Production-hardening notes
 
-- **Secrets:** never commit real `.env` files (see `.gitignore`). On EC2,
-  consider AWS Secrets Manager or SSM Parameter Store instead of plain `.env`
-  files for `DB_PASSWORD`.
-- **TLS:** put `certbot --nginx` in front once you have a domain name pointed
-  at the instance; the provided `nginx/app.conf` is HTTP-only by design so
-  you can layer TLS on top for your specific domain.
-- **DB access:** in every mode, Postgres is bound to `localhost`/an internal
-  Docker network only — never expose 5432 to the internet.
-- **Rate limiting:** both Node services use `express-rate-limit`; nginx also
-  rate-limits at the edge (`limit_req_zone` in `nginx/app.conf`).
-- **Health checks:** all three apps expose `/health`; Docker Compose uses
-  this for `depends_on: condition: service_healthy`-style gating and you can
-  wire the same endpoint into an EC2 target group if you later move to an ALB
-  + Auto Scaling Group.
-- **Least privilege:** systemd units run as a dedicated unprivileged
-  `appsvc` user with `ProtectSystem=strict`; Docker images run as a
-  non-root `appuser` inside the container.
-- **CI:** `.github/workflows/ci.yml` builds all three images and runs a
-  smoke test (`docker compose up` + health checks) on every push — extend
-  this with your own deploy step (e.g. SSH + `git pull` + restart, or push to
-  ECR and pull on the instance).
+- **Secrets:** never commit real `.env` files. Consider AWS Secrets Manager
+  / SSM Parameter Store instead of plaintext `.env` on the instance.
+- **This demo publishes more ports than a real prod setup would** (each
+  mode's order-service and payment-service are reachable directly, not
+  just through the frontend/nginx) specifically so you can compare all
+  three side by side. For an actual production deployment, pick **one**
+  mode, don't publish the backend service ports at all, and put only the
+  frontend behind nginx/TLS.
+- **TLS:** `certbot --nginx` once you have a domain pointed at the box.
+- **DB access:** never expose 5432 to the internet in any mode.
+- **Rate limiting:** both Node services use `express-rate-limit`; nginx
+  also rate-limits at the edge.
+- **Health checks:** all apps expose `/health` with a `mode` field for
+  exactly this kind of multi-deployment verification.
+- **Least privilege:** systemd units run as `appsvc` with
+  `ProtectSystem=strict`; Docker images run as non-root `appuser`.
+- **CI:** `.github/workflows/ci.yml` builds and smoke-tests the Docker mode
+  on every push.
+
+## Common issues (from real deploys of this app)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `systemctl status` shows `activating (auto-restart)` looping | `.service` files not copied to `/etc/systemd/system/`, or app crash on start | `journalctl -u <service> -n 30` for the real error |
+| `Cannot find module 'dotenv'` in journalctl | `npm install` didn't fully complete | `rm -rf node_modules` and reinstall; verify with `ls node_modules \| grep dotenv` |
+| `npm error EACCES ... mkdir '/home/appsvc'` | `appsvc` created with `--no-create-home` | `sudo mkdir -p /home/appsvc && sudo chown appsvc:appsvc /home/appsvc && sudo usermod -d /home/appsvc appsvc` |
+| `curl` returns `{"error":"not found"}` through nginx/frontend | Proxy mounted with `app.use('/api/orders', proxy)`, which strips the prefix before forwarding | Use `pathFilter` instead of the mount path (already fixed in this repo's `frontend/server.js`) |
+| `permission denied for table orders` (`42501`) | `init.sql` runs as the `postgres` superuser, so tables are owned by `postgres`, not your app's DB role | `scripts/create-db.sh` now grants privileges automatically; for an existing DB run the `GRANT`/`ALTER DEFAULT PRIVILEGES` block manually |
+| Order response's `status` and `paymentStatus` disagree | The old code returned the pre-payment row instead of re-fetching after the callback | Already fixed — `order-service` re-fetches the row before responding |
 
 ## Pushing this to your own GitHub repo
 
@@ -296,11 +316,8 @@ Or just open `http://<host>/` in a browser and use the dashboard form.
 cd ecommerce-microservices
 git init
 git add .
-git commit -m "Initial commit: order/payment microservices sample app"
+git commit -m "Initial commit: order/payment microservices, 3 simultaneous deployment modes"
 git branch -M main
 git remote add origin https://github.com/<your-username>/ecommerce-microservices.git
 git push -u origin main
 ```
-
-Then clone that repo on your EC2 instance and follow whichever mode section
-above you want.

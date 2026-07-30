@@ -3,6 +3,7 @@ const orderCount = document.getElementById('orderCount');
 const orderForm = document.getElementById('orderForm');
 const formMsg = document.getElementById('formMsg');
 const refreshBtn = document.getElementById('refreshBtn');
+const modeBadge = document.getElementById('modeBadge');
 
 function fmtMoney(n) {
   return '$' + Number(n).toFixed(2);
@@ -39,7 +40,7 @@ function escapeHtml(str) {
 
 async function loadOrders() {
   try {
-    const res = await fetch('/api/orders');
+    const res = await fetch('api/orders');
     if (!res.ok) throw new Error('request failed');
     const orders = await res.json();
     renderOrders(orders);
@@ -63,7 +64,7 @@ orderForm.addEventListener('submit', async (e) => {
   };
 
   try {
-    const res = await fetch('/api/orders', {
+    const res = await fetch('api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -90,9 +91,9 @@ refreshBtn.addEventListener('click', loadOrders);
 // --- Poll service health for the status dots in the left rail ---
 async function pollHealth() {
   const targets = [
-    { svc: 'frontend', url: '/health' },
-    { svc: 'order', url: '/api/orders' },      // proxied — 200 implies order-service reachable
-    { svc: 'payment', url: '/api/payments' }   // proxied — 200 implies payment-service reachable
+    { svc: 'frontend', url: 'health' },
+    { svc: 'order', url: 'api/orders' },      // proxied - 200 implies order-service reachable
+    { svc: 'payment', url: 'api/payments' }   // proxied - 200 implies payment-service reachable
   ];
   for (const t of targets) {
     const el = document.querySelector(`.dot[data-svc="${t.svc}"]`);
@@ -107,6 +108,18 @@ async function pollHealth() {
   }
 }
 
+async function loadMode() {
+  try {
+    const res = await fetch('health');
+    const data = await res.json();
+    modeBadge.textContent = `mode: ${data.mode}`;
+    modeBadge.className = `mode-badge mode-${data.mode}`;
+  } catch {
+    modeBadge.textContent = 'mode: unreachable';
+  }
+}
+
+loadMode();
 loadOrders();
 pollHealth();
 setInterval(loadOrders, 8000);

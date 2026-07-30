@@ -1,5 +1,11 @@
 version: "3.9"
 
+# This is the "mode: docker" deployment -- its own Postgres container
+# (fully isolated, no host DB dependency) and its own host port range
+# (3003 / 4013 / 4023) so it can run alongside the systemd deployment
+# (3001 / 4011 / 4021) and the PM2 deployment (3002 / 4012 / 4022)
+# without any conflicts.
+
 networks:
   app-network:
     driver: bridge
@@ -10,30 +16,29 @@ volumes:
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: app-postgres
+    container_name: app-postgres-docker
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-appuser}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-appuser_pw}
-      POSTGRES_DB: ${DB_NAME:-appdb}
+      POSTGRES_DB: ${DB_NAME:-appdb_docker}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-appuser} -d ${DB_NAME:-appdb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-appuser} -d ${DB_NAME:-appdb_docker}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - app-network
-    # DB port intentionally NOT published to the host in prod. Uncomment for local debugging:
-    # ports:
-    #   - "5432:5432"
+    # DB port intentionally NOT published to the host. It's only reachable
+    # from other containers on app-network.
 
   order-service:
     build:
       context: ../services/order-service
-    container_name: order-service
+    container_name: order-service-docker
     restart: unless-stopped
     environment:
       PORT: 4001
@@ -41,14 +46,20 @@ services:
       DB_PORT: 5432
       DB_USER: ${DB_USER:-appuser}
       DB_PASSWORD: ${DB_PASSWORD:-appuser_pw}
-      DB_NAME: ${DB_NAME:-appdb}
+      DB_NAME: ${DB_NAME:-appdb_docker}
       PAYMENT_SERVICE_URL: http://payment-service:4002
+      DEPLOY_MODE: docker
       LOG_LEVEL: info
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - app-network
+    ports:
+      # Published to the host (unlike a typical prod setup) purely so you
+      # can curl order-service directly and compare it against the
+      # systemd (4011) and PM2 (4012) instances side by side.
+      - "4013:4001"
     deploy:
       resources:
         limits:
@@ -58,7 +69,7 @@ services:
   payment-service:
     build:
       context: ../services/payment-service
-    container_name: payment-service
+    container_name: payment-service-docker
     restart: unless-stopped
     environment:
       PORT: 4002
@@ -66,14 +77,17 @@ services:
       DB_PORT: 5432
       DB_USER: ${DB_USER:-appuser}
       DB_PASSWORD: ${DB_PASSWORD:-appuser_pw}
-      DB_NAME: ${DB_NAME:-appdb}
+      DB_NAME: ${DB_NAME:-appdb_docker}
       ORDER_SERVICE_URL: http://order-service:4001
+      DEPLOY_MODE: docker
       LOG_LEVEL: info
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - app-network
+    ports:
+      - "4023:4002"
     deploy:
       resources:
         limits:
@@ -83,17 +97,18 @@ services:
   frontend:
     build:
       context: ../frontend
-    container_name: frontend
+    container_name: frontend-docker
     restart: unless-stopped
     environment:
       PORT: 3000
       ORDER_SERVICE_URL: http://order-service:4001
       PAYMENT_SERVICE_URL: http://payment-service:4002
+      DEPLOY_MODE: docker
     depends_on:
       - order-service
       - payment-service
     ports:
-      - "3000:3000"
+      - "3003:3000"
     networks:
       - app-network
     deploy:

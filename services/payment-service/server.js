@@ -15,6 +15,7 @@ const app = express();
 const PORT = process.env.PORT || 4002;
 const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:4001';
 const SERVICE_NAME = 'payment-service';
+const DEPLOY_MODE = process.env.DEPLOY_MODE || 'unknown';
 
 app.use(helmet());
 app.use(cors());
@@ -25,9 +26,9 @@ app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', service: SERVICE_NAME, db: 'connected' });
+    res.json({ status: 'ok', service: SERVICE_NAME, mode: DEPLOY_MODE, port: PORT, db: 'connected' });
   } catch (err) {
-    res.status(503).json({ status: 'error', service: SERVICE_NAME, db: 'disconnected' });
+    res.status(503).json({ status: 'error', service: SERVICE_NAME, mode: DEPLOY_MODE, port: PORT, db: 'disconnected' });
   }
 });
 

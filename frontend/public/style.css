@@ -84,6 +84,15 @@ body {
 }
 .sub { color: var(--mute); margin: 0; font-size: 13px; }
 
+.mode-badge {
+  display: inline-block; margin-top: 10px; padding: 3px 10px; border-radius: 20px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  border: 1px solid var(--line); color: var(--mute);
+}
+.mode-badge.mode-systemd { color: #6FA8E3; border-color: rgba(111,168,227,0.4); background: rgba(111,168,227,0.1); }
+.mode-badge.mode-pm2 { color: var(--accent); border-color: rgba(111,227,155,0.4); background: rgba(111,227,155,0.1); }
+.mode-badge.mode-docker { color: #B78FE3; border-color: rgba(183,143,227,0.4); background: rgba(183,143,227,0.1); }
+
 .btn-ghost, .btn-primary {
   font-family: inherit; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
   padding: 10px 16px; border-radius: 6px; cursor: pointer; border: 1px solid var(--line);
